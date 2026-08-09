@@ -7,7 +7,7 @@ import joblib
 from sklearn.base import BaseEstimator, TransformerMixin
 import sklearn._loss
 
-# 1. 精准修复 Scikit-Learn 跨版本 CyHalfBinomialLoss 缺失问题
+# 精准修复 Scikit-Learn 跨版本 CyHalfBinomialLoss 缺失问题
 if not hasattr(sklearn._loss, 'CyHalfBinomialLoss'):
     try:
         from sklearn._loss.loss import HalfBinomialLoss
@@ -16,12 +16,7 @@ if not hasattr(sklearn._loss, 'CyHalfBinomialLoss'):
         if hasattr(sklearn._loss, 'HalfBinomialLoss'):
             sklearn._loss.CyHalfBinomialLoss = sklearn._loss.HalfBinomialLoss
 
-# 2. 定义 Transformer 并挂载至 __main__
-import streamlit as st
-import pandas as pd
-import joblib
-from sklearn.base import BaseEstimator, TransformerMixin
-
+# 定义 Transformer 并挂载至 __main__
 class BankPipelineTransformer(BaseEstimator, TransformerMixin):
     def __init__(self, target_columns=None):
         self.target_columns = target_columns
@@ -59,60 +54,7 @@ setattr(__main__, 'BankPipelineTransformer', BankPipelineTransformer)
 sys.modules['__main__'].BankPipelineTransformer = BankPipelineTransformer
 
 # ------------------------------------------------------------------------------
-# 1. 修复模块映射 (解决 joblib 反序列化 ModuleNotFoundError: No module named '_loss')
-# ------------------------------------------------------------------------------
-try:
-    import sklearn._loss
-    sys.modules['_loss'] = sklearn._loss
-except ImportError:
-    try:
-        import sklearn.ensemble._gb_losses as _loss
-        sys.modules['_loss'] = _loss
-    except ImportError:
-        pass
-
-# ------------------------------------------------------------------------------
-# 2. 定义自定义转换器并挂载至 __main__ 作用域
-# ------------------------------------------------------------------------------
-class BankPipelineTransformer(BaseEstimator, TransformerMixin):
-    def __init__(self, target_columns=None):
-        self.target_columns = target_columns
-        
-    def fit(self, X, y=None):
-        return self
-        
-    def transform(self, X):
-        X_out = X.copy()
-        drop_leakage_cols = ['Complain', 'Satisfaction Score']
-        X_out = X_out.drop(columns=[c for c in drop_leakage_cols if c in X_out.columns], errors='ignore')
-        
-        X_out['Balance_Salary_Ratio'] = X_out['Balance'] / (X_out['EstimatedSalary'] + 1e-5)
-        X_out['Balance_per_Product'] = X_out['Balance'] / X_out['NumOfProducts']
-        X_out['Is_Zero_Balance'] = (X_out['Balance'] == 0).astype(int)
-        
-        X_out['Age_Tenure_Ratio'] = X_out['Tenure'] / (X_out['Age'] + 1e-5)
-        X_out['Is_High_Risk_Age'] = ((X_out['Age'] >= 40) & (X_out['Age'] <= 65)).astype(int)
-        
-        X_out['Is_Optimal_Products'] = (X_out['NumOfProducts'] == 2).astype(int)
-        X_out['Is_Excess_Products'] = (X_out['NumOfProducts'] >= 3).astype(int)
-        
-        cat_cols = ['Geography', 'Gender', 'Card Type']
-        X_encoded = pd.get_dummies(X_out, columns=cat_cols, drop_first=True)
-        
-        if self.target_columns is not None:
-            for col in self.target_columns:
-                if col not in X_encoded.columns:
-                    X_encoded[col] = 0
-            X_encoded = X_encoded[self.target_columns]
-            
-        return X_encoded
-
-# 注册到当前运行环境的 __main__ 模块下
-setattr(__main__, 'BankPipelineTransformer', BankPipelineTransformer)
-sys.modules['__main__'].BankPipelineTransformer = BankPipelineTransformer
-
-# ------------------------------------------------------------------------------
-# 3. 页面配置与模型加载
+# 页面配置与模型加载
 # ------------------------------------------------------------------------------
 st.set_page_config(page_title="银行客户流失预警系统", layout="wide")
 st.title("🏦 银行客户流失预警与精准营销系统")
@@ -126,7 +68,7 @@ pipeline = payload['pipeline']
 optimal_thresh = payload['optimal_threshold']
 
 # ------------------------------------------------------------------------------
-# 4. 侧边栏：客户特征输入栏
+# 侧边栏：客户特征输入栏
 # ------------------------------------------------------------------------------
 st.sidebar.header("📋 客户基础特征输入")
 credit_score = st.sidebar.number_input("信用评分 (CreditScore)", 300, 850, 650)
@@ -143,7 +85,7 @@ card_type = st.sidebar.selectbox("卡片等级 (Card Type)", ["SILVER", "GOLD", 
 points = st.sidebar.number_input("客户积分 (Point Earned)", 0, 1000, 450)
 
 # ------------------------------------------------------------------------------
-# 5. 评估逻辑与结果展示
+# 评估逻辑与结果展示
 # ------------------------------------------------------------------------------
 if st.button("🚀 评估该客户流失风险"):
     input_data = {
