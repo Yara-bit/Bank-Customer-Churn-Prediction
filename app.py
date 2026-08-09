@@ -1,63 +1,61 @@
-# app.py
-import sys
-import __main__
+# app.py - 银行客户流失预警工作台 (轻量化部署版)
 import streamlit as st
 import pandas as pd
 import joblib
-from sklearn.base import BaseEstimator, TransformerMixin
 
-# 1. 定义转换器类
-class BankPipelineTransformer(BaseEstimator, TransformerMixin):
-    def __init__(self, target_columns=None):
-        self.target_columns = target_columns
-        
-    def fit(self, X, y=None):
-        return self
-        
-    def transform(self, X):
-        X_out = X.copy()
-        drop_leakage_cols = ['Complain', 'Satisfaction Score']
-        X_out = X_out.drop(columns=[c for c in drop_leakage_cols if c in X_out.columns], errors='ignore')
-        
-        X_out['Balance_Salary_Ratio'] = X_out['Balance'] / (X_out['EstimatedSalary'] + 1e-5)
-        X_out['Balance_per_Product'] = X_out['Balance'] / X_out['NumOfProducts']
-        X_out['Is_Zero_Balance'] = (X_out['Balance'] == 0).astype(int)
-        
-        X_out['Age_Tenure_Ratio'] = X_out['Tenure'] / (X_out['Age'] + 1e-5)
-        X_out['Is_High_Risk_Age'] = ((X_out['Age'] >= 40) & (X_out['Age'] <= 65)).astype(int)
-        
-        X_out['Is_Optimal_Products'] = (X_out['NumOfProducts'] == 2).astype(int)
-        X_out['Is_Excess_Products'] = (X_out['NumOfProducts'] >= 3).astype(int)
-        
-        cat_cols = ['Geography', 'Gender', 'Card Type']
-        X_encoded = pd.get_dummies(X_out, columns=cat_cols, drop_first=True)
-        
-        if self.target_columns is not None:
-            for col in self.target_columns:
-                if col not in X_encoded.columns:
-                    X_encoded[col] = 0
-            X_encoded = X_encoded[self.target_columns]
-            
-        return X_encoded
-
-# 将类手动注册到当前运行环境的 __main__ 模块下
-setattr(__main__, 'BankPipelineTransformer', BankPipelineTransformer)
-sys.modules['__main__'].BankPipelineTransformer = BankPipelineTransformer
-
-# 2. 页面配置与加载
+# ------------------------------------------------------------------------------
+# 1. 页面基础配置与模型加载
+# ------------------------------------------------------------------------------
 st.set_page_config(page_title="银行客户流失预警系统", layout="wide")
 st.title("🏦 银行客户流失预警与精准营销系统")
+st.markdown("基于 GBDT 算法与特征工程的实时流失风险评估")
 
 @st.cache_resource
-def load_pipeline():
-    return joblib.load('churn_pipeline_aligned.pkl')
+def load_assets():
+    model = joblib.load('gb_model.pkl')
+    feature_cols = joblib.load('model_features.pkl')
+    return model, feature_cols
 
-payload = load_pipeline()
-pipeline = payload['pipeline']
-optimal_thresh = payload['optimal_threshold']
+model, feature_cols = load_assets()
+OPTIMAL_THRESH = 0.3659  # 最佳决策阈值
 
-# 3. 侧边栏输入
+# ------------------------------------------------------------------------------
+# 2. 实时特征工程计算函数 (纯 Pandas 实现)
+# ------------------------------------------------------------------------------
+def preprocess_input(raw_dict, target_columns):
+    df = pd.DataFrame([raw_dict])
+    
+    # 剔除数据泄漏字段
+    drop_cols = ['Complain', 'Satisfaction Score']
+    df = df.drop(columns=[c for c in drop_cols if c in df.columns], errors='ignore')
+    
+    # 计算衍生特征
+    df['Balance_Salary_Ratio'] = df['Balance'] / (df['EstimatedSalary'] + 1e-5)
+    df['Balance_per_Product'] = df['Balance'] / df['NumOfProducts']
+    df['Is_Zero_Balance'] = (df['Balance'] == 0).astype(int)
+    
+    df['Age_Tenure_Ratio'] = df['Tenure'] / (df['Age'] + 1e-5)
+    df['Is_High_Risk_Age'] = ((df['Age'] >= 40) & (df['Age'] <= 65)).astype(int)
+    
+    df['Is_Optimal_Products'] = (df['NumOfProducts'] == 2).astype(int)
+    df['Is_Excess_Products'] = (df['NumOfProducts'] >= 3).astype(int)
+    
+    # One-Hot 编码
+    cat_cols = ['Geography', 'Gender', 'Card Type']
+    df_encoded = pd.get_dummies(df, columns=cat_cols, drop_first=True)
+    
+    # 严格对齐训练时的列结构
+    for col in target_columns:
+        if col not in df_encoded.columns:
+            df_encoded[col] = 0
+            
+    return df_encoded[target_columns]
+
+# ------------------------------------------------------------------------------
+# 3. 侧边栏：客户特征输入栏
+# ------------------------------------------------------------------------------
 st.sidebar.header("📋 客户基础特征输入")
+
 credit_score = st.sidebar.number_input("信用评分 (CreditScore)", 300, 850, 650)
 geography = st.sidebar.selectbox("所在国家 (Geography)", ["France", "Germany", "Spain"])
 gender = st.sidebar.selectbox("性别 (Gender)", ["Male", "Female"])
@@ -71,37 +69,45 @@ salary = st.sidebar.number_input("预估年薪/€ (EstimatedSalary)", 0.0, 2000
 card_type = st.sidebar.selectbox("卡片等级 (Card Type)", ["SILVER", "GOLD", "PLATINUM", "DIAMOND"])
 points = st.sidebar.number_input("客户积分 (Point Earned)", 0, 1000, 450)
 
-# 4. 评估逻辑
+# ------------------------------------------------------------------------------
+# 4. 实时推理与干预建议输出
+# ------------------------------------------------------------------------------
 if st.button("🚀 评估该客户流失风险"):
-    input_data = {
+    raw_payload = {
         'CreditScore': credit_score, 'Geography': geography, 'Gender': gender,
         'Age': age, 'Tenure': tenure, 'Balance': balance,
         'NumOfProducts': num_of_products, 'HasCrCard': has_cr_card,
         'IsActiveMember': is_active_member, 'EstimatedSalary': salary,
         'Card Type': card_type, 'Point Earned': points
     }
-    input_df = pd.DataFrame([input_data])
-    prob = pipeline.predict_proba(input_df)[0, 1]
-    is_high_risk = prob >= optimal_thresh
     
+    # 预处理与特征转换
+    X_processed = preprocess_input(raw_payload, feature_cols)
+    
+    # 预测概率
+    prob = model.predict_proba(X_processed)[0, 1]
+    is_high_risk = prob >= OPTIMAL_THRESH
+    
+    # 展示核心结果
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("预测流失概率", f"{prob:.1%}")
     with col2:
-        st.metric("最佳决策阈值", f"{optimal_thresh:.4f}")
+        st.metric("最佳决策阈值", f"{OPTIMAL_THRESH:.4f}")
     with col3:
         if is_high_risk:
             st.error("🚨 判定结果：高危流失客户")
         else:
             st.success("✅ 判定结果：低风险/留存客户")
             
+    # 业务建议输出
     st.markdown("### 💡 客户经理干预 SOP 建议")
     if is_high_risk:
         if num_of_products >= 3:
-            st.warning("⚠️ **产品结构风险**：持有产品过多（>=3个），建议联系客户精简服务套餐。")
+            st.warning("⚠️ **产品结构风险**：持有产品过多（>=3个），触发交叉营销负面效应。建议协助精简产品。")
         if age >= 40 and age <= 65:
-            st.warning("⚠️ **年龄区间风险**：处于中年高危期，建议主动推送稳健型中长期理财或养老规划。")
+            st.warning("⚠️ **年龄区间风险**：处于 40-65 岁中年资产重组高危期。建议推荐稳健型理财。")
         if is_active_member == 0 and balance > 50000:
-            st.warning("⚠️ **高资沉睡风险**：存款较高但账户不活跃，建议 3 个工作日内进行电话关怀。")
+            st.warning("⚠️ **高资沉睡风险**：存款较高但长期不活跃。建议客户经理 3 个工作日内电话拜访。")
     else:
-        st.info("该客户目前处于低风险区间，维持常规客户维系即可。")
+        st.info("该客户属于低风险群体，维持常规服务即可。")
