@@ -1,17 +1,16 @@
-# app.py - 银行客户流失预警工作台 (轻量化部署版)
+# app.py - 银行客户流活预警工作台 
 import streamlit as st
 import pandas as pd
 import joblib
 
-# ------------------------------------------------------------------------------
-# 1. 页面基础配置与模型加载
-# ------------------------------------------------------------------------------
+# 1. 页面配置与资源加载
 st.set_page_config(page_title="银行客户流失预警系统", layout="wide")
 st.title("🏦 银行客户流失预警与精准营销系统")
 st.markdown("基于 GBDT 算法与特征工程的实时流失风险评估")
 
 @st.cache_resource
 def load_assets():
+    # 读取纯模型与列名，彻底避免 AttributeError
     model = joblib.load('gb_model.pkl')
     feature_cols = joblib.load('model_features.pkl')
     return model, feature_cols
@@ -19,9 +18,7 @@ def load_assets():
 model, feature_cols = load_assets()
 OPTIMAL_THRESH = 0.3659  # 最佳决策阈值
 
-# ------------------------------------------------------------------------------
-# 2. 实时特征工程计算函数 (纯 Pandas 实现)
-# ------------------------------------------------------------------------------
+# 2. 实时特征工程预处理函数
 def preprocess_input(raw_dict, target_columns):
     df = pd.DataFrame([raw_dict])
     
@@ -29,7 +26,7 @@ def preprocess_input(raw_dict, target_columns):
     drop_cols = ['Complain', 'Satisfaction Score']
     df = df.drop(columns=[c for c in drop_cols if c in df.columns], errors='ignore')
     
-    # 计算衍生特征
+    # 构建衍生特征
     df['Balance_Salary_Ratio'] = df['Balance'] / (df['EstimatedSalary'] + 1e-5)
     df['Balance_per_Product'] = df['Balance'] / df['NumOfProducts']
     df['Is_Zero_Balance'] = (df['Balance'] == 0).astype(int)
@@ -44,16 +41,14 @@ def preprocess_input(raw_dict, target_columns):
     cat_cols = ['Geography', 'Gender', 'Card Type']
     df_encoded = pd.get_dummies(df, columns=cat_cols, drop_first=True)
     
-    # 严格对齐训练时的列结构
+    # 严格对齐训练时的特征列与顺序
     for col in target_columns:
         if col not in df_encoded.columns:
             df_encoded[col] = 0
             
     return df_encoded[target_columns]
 
-# ------------------------------------------------------------------------------
 # 3. 侧边栏：客户特征输入栏
-# ------------------------------------------------------------------------------
 st.sidebar.header("📋 客户基础特征输入")
 
 credit_score = st.sidebar.number_input("信用评分 (CreditScore)", 300, 850, 650)
@@ -69,9 +64,7 @@ salary = st.sidebar.number_input("预估年薪/€ (EstimatedSalary)", 0.0, 2000
 card_type = st.sidebar.selectbox("卡片等级 (Card Type)", ["SILVER", "GOLD", "PLATINUM", "DIAMOND"])
 points = st.sidebar.number_input("客户积分 (Point Earned)", 0, 1000, 450)
 
-# ------------------------------------------------------------------------------
-# 4. 实时推理与干预建议输出
-# ------------------------------------------------------------------------------
+# 4. 推理与评估逻辑
 if st.button("🚀 评估该客户流失风险"):
     raw_payload = {
         'CreditScore': credit_score, 'Geography': geography, 'Gender': gender,
@@ -81,14 +74,14 @@ if st.button("🚀 评估该客户流失风险"):
         'Card Type': card_type, 'Point Earned': points
     }
     
-    # 预处理与特征转换
+    # 纯函数预处理
     X_processed = preprocess_input(raw_payload, feature_cols)
     
-    # 预测概率
+    # 推理计算
     prob = model.predict_proba(X_processed)[0, 1]
     is_high_risk = prob >= OPTIMAL_THRESH
     
-    # 展示核心结果
+    # 结果展示
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("预测流失概率", f"{prob:.1%}")
@@ -100,14 +93,14 @@ if st.button("🚀 评估该客户流失风险"):
         else:
             st.success("✅ 判定结果：低风险/留存客户")
             
-    # 业务建议输出
+    # SOP 建议
     st.markdown("### 💡 客户经理干预 SOP 建议")
     if is_high_risk:
         if num_of_products >= 3:
-            st.warning("⚠️ **产品结构风险**：持有产品过多（>=3个），触发交叉营销负面效应。建议协助精简产品。")
+            st.warning("⚠️ **产品结构风险**：持有产品过多（>=3个），建议精简客户服务套餐。")
         if age >= 40 and age <= 65:
-            st.warning("⚠️ **年龄区间风险**：处于 40-65 岁中年资产重组高危期。建议推荐稳健型理财。")
+            st.warning("⚠️ **年龄区间风险**：处于 40-65 岁中年资产重组高危期，建议推行稳健理财。")
         if is_active_member == 0 and balance > 50000:
-            st.warning("⚠️ **高资沉睡风险**：存款较高但长期不活跃。建议客户经理 3 个工作日内电话拜访。")
+            st.warning("⚠️ **高资沉睡风险**：存款较高但长期不活跃，建议 3 个工作日内电话拜访。")
     else:
         st.info("该客户属于低风险群体，维持常规服务即可。")
