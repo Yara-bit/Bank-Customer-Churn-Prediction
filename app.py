@@ -1,22 +1,22 @@
-# app.py - 银行客户流失预警工作台
+# app.py - 银行客户流失预警工作台 
 import sys
 import __main__
-import streamlit as st
 import pandas as pd
 import joblib
+import streamlit as st
 from sklearn.base import BaseEstimator, TransformerMixin
-import sklearn._loss
 
-# 精准修复 Scikit-Learn 跨版本 CyHalfBinomialLoss 缺失问题
-if not hasattr(sklearn._loss, 'CyHalfBinomialLoss'):
-    try:
+# 1. 精准修复 Scikit-Learn 跨版本反序列化兼容性 (CyHalfBinomialLoss 及 _loss 映射)
+try:
+    import sklearn._loss
+    if not hasattr(sklearn._loss, 'CyHalfBinomialLoss'):
         from sklearn._loss.loss import HalfBinomialLoss
         sklearn._loss.CyHalfBinomialLoss = HalfBinomialLoss
-    except ImportError:
-        if hasattr(sklearn._loss, 'HalfBinomialLoss'):
-            sklearn._loss.CyHalfBinomialLoss = sklearn._loss.HalfBinomialLoss
+    sys.modules['_loss'] = sklearn._loss
+except (ImportError, AttributeError):
+    pass
 
-# 定义 Transformer 并挂载至 __main__
+# 2. 定义特征转换器并挂载至全局 __main__ 作用域
 class BankPipelineTransformer(BaseEstimator, TransformerMixin):
     def __init__(self, target_columns=None):
         self.target_columns = target_columns
@@ -53,9 +53,7 @@ class BankPipelineTransformer(BaseEstimator, TransformerMixin):
 setattr(__main__, 'BankPipelineTransformer', BankPipelineTransformer)
 sys.modules['__main__'].BankPipelineTransformer = BankPipelineTransformer
 
-# ------------------------------------------------------------------------------
-# 页面配置与模型加载
-# ------------------------------------------------------------------------------
+# 3. 页面配置与模型载入
 st.set_page_config(page_title="银行客户流失预警系统", layout="wide")
 st.title("🏦 银行客户流失预警与精准营销系统")
 
@@ -67,9 +65,7 @@ payload = load_pipeline()
 pipeline = payload['pipeline']
 optimal_thresh = payload['optimal_threshold']
 
-# ------------------------------------------------------------------------------
-# 侧边栏：客户特征输入栏
-# ------------------------------------------------------------------------------
+# 4. 侧边栏交互面板
 st.sidebar.header("📋 客户基础特征输入")
 credit_score = st.sidebar.number_input("信用评分 (CreditScore)", 300, 850, 650)
 geography = st.sidebar.selectbox("所在国家 (Geography)", ["France", "Germany", "Spain"])
@@ -84,9 +80,7 @@ salary = st.sidebar.number_input("预估年薪/€ (EstimatedSalary)", 0.0, 2000
 card_type = st.sidebar.selectbox("卡片等级 (Card Type)", ["SILVER", "GOLD", "PLATINUM", "DIAMOND"])
 points = st.sidebar.number_input("客户积分 (Point Earned)", 0, 1000, 450)
 
-# ------------------------------------------------------------------------------
-# 评估逻辑与结果展示
-# ------------------------------------------------------------------------------
+# 5. 推理逻辑与风险提示
 if st.button("🚀 评估该客户流失风险"):
     input_data = {
         'CreditScore': credit_score, 'Geography': geography, 'Gender': gender,
@@ -114,7 +108,7 @@ if st.button("🚀 评估该客户流失风险"):
     if is_high_risk:
         if num_of_products >= 3:
             st.warning("⚠️ **产品结构风险**：持有产品过多（>=3个），建议联系客户精简服务套餐。")
-        if age >= 40 and age <= 65:
+        if 40 <= age <= 65:
             st.warning("⚠️ **年龄区间风险**：处于中年高危期，建议主动推送稳健型中长期理财或养老规划。")
         if is_active_member == 0 and balance > 50000:
             st.warning("⚠️ **高资沉睡风险**：存款较高但账户不活跃，建议 3 个工作日内进行电话关怀。")
