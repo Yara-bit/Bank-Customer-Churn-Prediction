@@ -1,4 +1,4 @@
-# app.py
+# app.py - 银行客户流失预警工作台
 import sys
 import __main__
 import streamlit as st
@@ -6,7 +6,22 @@ import pandas as pd
 import joblib
 from sklearn.base import BaseEstimator, TransformerMixin
 
-# 1. 定义转换器类
+# ------------------------------------------------------------------------------
+# 1. 修复模块映射 (解决 joblib 反序列化 ModuleNotFoundError: No module named '_loss')
+# ------------------------------------------------------------------------------
+try:
+    import sklearn._loss
+    sys.modules['_loss'] = sklearn._loss
+except ImportError:
+    try:
+        import sklearn.ensemble._gb_losses as _loss
+        sys.modules['_loss'] = _loss
+    except ImportError:
+        pass
+
+# ------------------------------------------------------------------------------
+# 2. 定义自定义转换器并挂载至 __main__ 作用域
+# ------------------------------------------------------------------------------
 class BankPipelineTransformer(BaseEstimator, TransformerMixin):
     def __init__(self, target_columns=None):
         self.target_columns = target_columns
@@ -40,11 +55,13 @@ class BankPipelineTransformer(BaseEstimator, TransformerMixin):
             
         return X_encoded
 
-# 【核心修复】将类手动注册到当前运行环境的 __main__ 模块下
+# 注册到当前运行环境的 __main__ 模块下
 setattr(__main__, 'BankPipelineTransformer', BankPipelineTransformer)
 sys.modules['__main__'].BankPipelineTransformer = BankPipelineTransformer
 
-# 2. 页面配置与加载
+# ------------------------------------------------------------------------------
+# 3. 页面配置与模型加载
+# ------------------------------------------------------------------------------
 st.set_page_config(page_title="银行客户流失预警系统", layout="wide")
 st.title("🏦 银行客户流失预警与精准营销系统")
 
@@ -56,7 +73,9 @@ payload = load_pipeline()
 pipeline = payload['pipeline']
 optimal_thresh = payload['optimal_threshold']
 
-# 3. 侧边栏输入
+# ------------------------------------------------------------------------------
+# 4. 侧边栏：客户特征输入栏
+# ------------------------------------------------------------------------------
 st.sidebar.header("📋 客户基础特征输入")
 credit_score = st.sidebar.number_input("信用评分 (CreditScore)", 300, 850, 650)
 geography = st.sidebar.selectbox("所在国家 (Geography)", ["France", "Germany", "Spain"])
@@ -71,7 +90,9 @@ salary = st.sidebar.number_input("预估年薪/€ (EstimatedSalary)", 0.0, 2000
 card_type = st.sidebar.selectbox("卡片等级 (Card Type)", ["SILVER", "GOLD", "PLATINUM", "DIAMOND"])
 points = st.sidebar.number_input("客户积分 (Point Earned)", 0, 1000, 450)
 
-# 4. 评估逻辑
+# ------------------------------------------------------------------------------
+# 5. 评估逻辑与结果展示
+# ------------------------------------------------------------------------------
 if st.button("🚀 评估该客户流失风险"):
     input_data = {
         'CreditScore': credit_score, 'Geography': geography, 'Gender': gender,
